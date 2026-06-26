@@ -296,6 +296,7 @@ class Expression(Enum):
     THINKING = auto()
     SURPRISED = auto()
     SLEEPY = auto()
+    ANGRY = auto()
     LISTENING = auto()
     SPEAKING = auto()
 
@@ -341,6 +342,11 @@ EXPRESSION_STYLES = {
     Expression.SLEEPY: EyeStyle(
         eye_width=140, eye_height=70,
         eyelid_openness=0.55, eyebrow_visible=False,
+    ),
+    Expression.ANGRY: EyeStyle(
+        eye_width=130, eye_height=62,
+        eyelid_openness=0.15, eyebrow_visible=True, eyebrow_offset_y=-55,
+        eyebrow_angle=0.35, eye_tilt=0.08,
     ),
     Expression.LISTENING: EyeStyle(
         eye_width=145, eye_height=78,
@@ -408,7 +414,12 @@ class Eye:
 
         spd = self.smooth * dt
         self.current_width = lerp(self.current_width, style.eye_width, spd)
-        self.current_height = lerp(self.current_height, style.eye_height, spd)
+
+        # Curiosity: eyes get taller when looking far to the sides (RoboEyes style)
+        curiosity = 1.0 + abs(self.target_look_x) * 0.4
+        effective_height = style.eye_height * curiosity
+        self.current_height = lerp(self.current_height, effective_height, spd)
+
         self.current_eyelid = lerp(self.current_eyelid, total_eyelid, spd * 1.5)
         self.current_tilt = lerp(self.current_tilt, style.eye_tilt, spd)
 
@@ -419,11 +430,18 @@ class Eye:
         cx = self.center_x
         cy = self.center_y
 
-        # Shift eye position slightly for look direction (robot tilts its whole eye)
-        look_ox = int(self.look_x * 8)
-        look_oy = int(self.look_y * 5)
+        # Shift eye position for look direction (RoboEyes style: entire eye moves)
+        look_ox = int(self.look_x * 40)
+        look_oy = int(self.look_y * 30)
         cx += look_ox
         cy += look_oy
+
+        # Apply eye tilt (for ANGRY expression)
+        if abs(self.current_tilt) > 0.001:
+            tilt_shift = int(self.current_tilt * 60)
+            if self.flipped:
+                tilt_shift = -tilt_shift
+            cx += tilt_shift
 
         open_height = self.current_height * (1.0 - self.current_eyelid * 0.95)
         if open_height < 2:
@@ -643,6 +661,14 @@ class RobotFace:
         self.look_interval = 2.5
 
         self.think_dots: List[Tuple[float, float, float]] = []
+        self.sweat_drops: List[SweatDrop] = []
+        self.sweat_enabled = False
+
+    def trigger_sweat(self):
+        """Spawn a sweat drop above a random eye."""
+        x = self.left_eye.center_x + random.randint(-30, 30) if random.random() < 0.5 else self.right_eye.center_x + random.randint(-30, 30)
+        y = self.face_cy - 80 + random.randint(-10, 10)
+        self.sweat_drops.append(SweatDrop(x, y))
 
     def set_expression(self, expr: Expression):
         self.target_expression = expr
@@ -680,6 +706,14 @@ class RobotFace:
         else:
             self.think_dots.clear()
 
+        # Sweat drops
+        if self.sweat_enabled:
+            if random.random() < dt * 1.5:
+                self.trigger_sweat()
+            self.sweat_drops = [d for d in self.sweat_drops if d.update(dt)]
+        else:
+            self.sweat_drops.clear()
+
     def draw(self, surface: pygame.Surface):
         style = EXPRESSION_STYLES[self.expression]
         self.left_eye.draw(surface, style)
@@ -693,6 +727,9 @@ class RobotFace:
                 dot_surf = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
                 pygame.draw.circle(dot_surf, (COLOR_IRIS[0], COLOR_IRIS[1], COLOR_IRIS[2], alpha), (size, size), size)
                 surface.blit(dot_surf, (int(bx) - size, int(by) - size))
+
+        for drop in self.sweat_drops:
+            drop.draw(surface)
 
         font = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)), bold=True)
         label = font.render(f"[{self.expression.name}]  V=voice  G=auto  T=speak  L=lang  SPACE=blink", True, (60, 60, 100))
@@ -720,6 +757,37 @@ class Sparkle:
         s = pygame.Surface((int(self.size * 2), int(self.size * 2)), pygame.SRCALPHA)
         pygame.draw.circle(s, (100, 150, 255, alpha), (int(self.size), int(self.size)), int(self.size))
         surface.blit(s, (int(self.x), int(self.y)))
+
+
+# =============================================================================
+# Sweat Drop (RoboEyes style animated sweat)
+# =============================================================================
+class SweatDrop:
+    """Animated sweat drop that appears above the eyes."""
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+        self.age = 0.0
+        self.max_age = random.uniform(0.8, 1.5)
+        self.vy = random.uniform(20, 40)  # Falling speed
+
+    def update(self, dt: float) -> bool:
+        """Update position. Returns False when expired."""
+        self.age += dt
+        if self.age > self.max_age:
+            return False
+        self.y += self.vy * dt
+        return True
+
+    def draw(self, surface: pygame.Surface):
+        alpha = max(0, int(200 * (1.0 - self.age / self.max_age)))
+        size = max(2, int(6 * (1.0 - self.age * 0.3)))
+        s = pygame.Surface((size * 2, size * 3), pygame.SRCALPHA)
+        # Teardrop shape: circle at top, triangle at bottom
+        pygame.draw.circle(s, (100, 180, 255, alpha), (size, size), size)
+        pts = [(size - size // 2, size * 2), (size + size // 2, size * 2), (size, size * 3)]
+        pygame.draw.polygon(s, (100, 180, 255, alpha), pts)
+        surface.blit(s, (int(self.x) - size, int(self.y) - size))
 
 
 # =============================================================================
@@ -1367,6 +1435,7 @@ def main():
         pygame.K_4: Expression.SURPRISED,
         pygame.K_5: Expression.SLEEPY,
         pygame.K_6: Expression.LISTENING,
+        pygame.K_7: Expression.ANGRY,
     }
 
     print("🤖 Robot Eyes + AI Voice Assistant!")
@@ -1375,7 +1444,7 @@ def main():
     print(f"   Piper TTS: {'✅ Ready' if speaker.available else '❌ Not available'}")
     print(f"   AI Brain: {'✅ Ready' if brain.available else '❌ No API key (set in config.json)'}")
     print("   Controls:")
-    print("   1-6=expr  V=voice  G=auto-respond  T=speak  L=lang  SPACE=blink  ESC/Q=Quit")
+    print("   1-7=expr  V=voice  G=auto  T=speak  L=lang  S=sweat  SPACE=blink  ESC/Q=Quit")
 
     running = True
     while running:
@@ -1445,6 +1514,10 @@ def main():
                             print("   🎙️  Voice recognition STARTED")
                     else:
                         print("   ⚠️  Voice not available (need vosk + mic)")
+                elif event.key == pygame.K_s:
+                    # Toggle sweat drops (RoboEyes style)
+                    face.sweat_enabled = not face.sweat_enabled
+                    print(f"   💧 Sweat drops: {'ON' if face.sweat_enabled else 'OFF'}")
                 elif event.key == pygame.K_c:
                     # Clear brain conversation history
                     brain.clear_history()
