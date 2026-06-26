@@ -114,9 +114,6 @@ FONT_SCALE = 1.0  # Overridden in --window mode to scale fonts
 COLOR_BG = (10, 10, 30)
 COLOR_EYE_WHITE = (240, 240, 250)
 COLOR_IRIS = (0, 200, 255)
-COLOR_IRIS_DARK = (0, 140, 200)
-COLOR_PUPIL = (10, 10, 20)
-COLOR_PUPIL_SHINE = (255, 255, 255)
 COLOR_HAPPY = (255, 220, 50)
 COLOR_EYELID = (10, 10, 30)
 COLOR_EYEBROW = (80, 80, 120)
@@ -308,10 +305,8 @@ class Expression(Enum):
 # =============================================================================
 @dataclass
 class EyeStyle:
-    eye_width: int = 120
-    eye_height: int = 100
-    iris_size: int = 40
-    pupil_size: int = 18
+    eye_width: int = 130
+    eye_height: int = 70
     eyelid_openness: float = 0.0
     eye_tilt: float = 0.0
     eyebrow_offset_y: int = -60
@@ -320,45 +315,42 @@ class EyeStyle:
     mouth_visible: bool = False
     mouth_type: str = "none"
     blush_visible: bool = False
-    pupil_scale: float = 1.0
-    iris_glow: bool = False
 
 
 EXPRESSION_STYLES = {
     Expression.NEUTRAL: EyeStyle(
-        eye_width=120, eye_height=100, iris_size=42, pupil_size=18,
-        eyelid_openness=0.0, eyebrow_visible=False, pupil_scale=1.0,
+        eye_width=140, eye_height=70,
+        eyelid_openness=0.0, eyebrow_visible=False,
     ),
     Expression.HAPPY: EyeStyle(
-        eye_width=120, eye_height=60, iris_size=38, pupil_size=16,
-        eyelid_openness=0.35, eyebrow_visible=True, eyebrow_offset_y=-65,
+        eye_width=140, eye_height=55,
+        eyelid_openness=0.25, eyebrow_visible=True, eyebrow_offset_y=-65,
         eyebrow_angle=0.0, mouth_visible=True, mouth_type="smile",
-        blush_visible=True, pupil_scale=0.9,
+        blush_visible=True,
     ),
     Expression.THINKING: EyeStyle(
-        eye_width=120, eye_height=90, iris_size=40, pupil_size=17,
-        eyelid_openness=0.15, eyebrow_visible=True, eyebrow_offset_y=-70,
-        eyebrow_angle=0.15, pupil_scale=0.95, iris_glow=True,
+        eye_width=135, eye_height=65,
+        eyelid_openness=0.1, eyebrow_visible=True, eyebrow_offset_y=-70,
+        eyebrow_angle=0.15,
     ),
     Expression.SURPRISED: EyeStyle(
-        eye_width=130, eye_height=130, iris_size=36, pupil_size=14,
+        eye_width=155, eye_height=85,
         eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-80,
-        eyebrow_angle=-0.1, pupil_scale=0.7,
+        eyebrow_angle=-0.1,
     ),
     Expression.SLEEPY: EyeStyle(
-        eye_width=120, eye_height=100, iris_size=40, pupil_size=18,
-        eyelid_openness=0.55, eyebrow_visible=False, pupil_scale=1.0,
+        eye_width=140, eye_height=70,
+        eyelid_openness=0.55, eyebrow_visible=False,
     ),
     Expression.LISTENING: EyeStyle(
-        eye_width=125, eye_height=115, iris_size=44, pupil_size=16,
+        eye_width=145, eye_height=78,
         eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-75,
-        eyebrow_angle=-0.05, pupil_scale=1.1, iris_glow=True,
+        eyebrow_angle=-0.05,
     ),
     Expression.SPEAKING: EyeStyle(
-        eye_width=120, eye_height=105, iris_size=42, pupil_size=18,
+        eye_width=140, eye_height=75,
         eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-68,
         eyebrow_angle=0.0, mouth_visible=True, mouth_type="talking",
-        pupil_scale=1.0, iris_glow=True,
     ),
 }
 
@@ -372,13 +364,10 @@ class Eye:
         self.center_y = center_y
         self.flipped = flipped
 
-        self.current_width = 120.0
-        self.current_height = 100.0
-        self.current_iris_size = 42.0
-        self.current_pupil_size = 18.0
+        self.current_width = 130.0
+        self.current_height = 70.0
         self.current_eyelid = 0.0
         self.current_tilt = 0.0
-        self.current_pupil_scale = 1.0
 
         self.look_x = 0.0
         self.look_y = 0.0
@@ -420,11 +409,8 @@ class Eye:
         spd = self.smooth * dt
         self.current_width = lerp(self.current_width, style.eye_width, spd)
         self.current_height = lerp(self.current_height, style.eye_height, spd)
-        self.current_iris_size = lerp(self.current_iris_size, style.iris_size, spd)
-        self.current_pupil_size = lerp(self.current_pupil_size, style.pupil_size, spd)
         self.current_eyelid = lerp(self.current_eyelid, total_eyelid, spd * 1.5)
         self.current_tilt = lerp(self.current_tilt, style.eye_tilt, spd)
-        self.current_pupil_scale = lerp(self.current_pupil_scale, style.pupil_scale, spd)
 
         self.look_x = lerp(self.look_x, self.target_look_x, 3.0 * dt)
         self.look_y = lerp(self.look_y, self.target_look_y, 3.0 * dt)
@@ -433,87 +419,51 @@ class Eye:
         cx = self.center_x
         cy = self.center_y
 
+        # Shift eye position slightly for look direction (robot tilts its whole eye)
+        look_ox = int(self.look_x * 8)
+        look_oy = int(self.look_y * 5)
+        cx += look_ox
+        cy += look_oy
+
         open_height = self.current_height * (1.0 - self.current_eyelid * 0.95)
         if open_height < 2:
             open_height = 2
 
+        eye_w = self.current_width
+        eye_h = int(open_height)
+        corner_r = 12
+
+        # Subtle glow behind the eye
+        glow_rect = pygame.Rect(
+            cx - eye_w // 2 - 10, cy - eye_h // 2 - 10,
+            eye_w + 20, eye_h + 20,
+        )
+        pygame.draw.rect(surface, (40, 200, 255, 15), glow_rect, border_radius=corner_r + 4)
+
+        # Main eye — simple white rounded rectangle (robot style!)
         eye_rect = pygame.Rect(
-            cx - self.current_width // 2,
-            cy - int(open_height) // 2,
-            self.current_width,
-            int(open_height),
+            cx - eye_w // 2, cy - eye_h // 2,
+            eye_w, eye_h,
         )
+        pygame.draw.rect(surface, COLOR_EYE_WHITE, eye_rect, border_radius=corner_r)
 
-        # Glow behind eye
-        glow_surf = pygame.Surface(
-            (self.current_width + 30, int(open_height) + 30), pygame.SRCALPHA
-        )
-        glow_color = (COLOR_IRIS[0], COLOR_IRIS[1], COLOR_IRIS[2], 30)
-        pygame.draw.ellipse(
-            glow_surf, glow_color,
-            (15, 15, self.current_width, int(open_height))
-        )
-        surface.blit(
-            glow_surf,
-            (cx - self.current_width // 2 - 15, cy - int(open_height) // 2 - 15),
-        )
+        # Thin border for definition
+        pygame.draw.rect(surface, (200, 200, 220), eye_rect, width=2, border_radius=corner_r)
 
-        pygame.draw.ellipse(surface, COLOR_EYE_WHITE, eye_rect)
-
-        # Iris + pupil
-        iris_total = self.current_iris_size * self.current_pupil_scale
-        pupil_r = self.current_pupil_size * self.current_pupil_scale
-
-        max_offset_x = self.current_width * 0.22
-        max_offset_y = open_height * 0.18
-
-        clip_surf = pygame.Surface(
-            (self.current_width + 40, int(open_height) + 40), pygame.SRCALPHA
-        )
-        local_x = 20 + self.look_x * max_offset_x
-        local_y = 20 + self.look_y * max_offset_y
-
-        pygame.draw.circle(clip_surf, COLOR_IRIS_DARK, (int(local_x), int(local_y)), int(iris_total) + 3)
-        pygame.draw.circle(clip_surf, COLOR_IRIS, (int(local_x), int(local_y)), int(iris_total))
-        pygame.draw.circle(clip_surf, COLOR_PUPIL, (int(local_x), int(local_y)), int(pupil_r))
-
-        shine_x = local_x - iris_total * 0.25
-        shine_y = local_y - iris_total * 0.3
-        shine_r = max(4, iris_total * 0.2)
-        pygame.draw.circle(clip_surf, COLOR_PUPIL_SHINE, (int(shine_x), int(shine_y)), int(shine_r))
-
-        shine2_x = local_x + iris_total * 0.2
-        shine2_y = local_y + iris_total * 0.15
-        pygame.draw.circle(clip_surf, (200, 220, 255, 180), (int(shine2_x), int(shine2_y)), int(shine_r * 0.5))
-
-        if style.iris_glow:
-            glow_r = int(iris_total + 8 + math.sin(time.time() * 3) * 4)
-            glow_c = (COLOR_IRIS[0], COLOR_IRIS[1], COLOR_IRIS[2], 50)
-            pygame.draw.circle(clip_surf, glow_c, (int(local_x), int(local_y)), glow_r)
-
-        blit_x = cx - self.current_width // 2 - 20
-        blit_y = cy - int(open_height) // 2 - 20
-
-        mask_surf = pygame.Surface(
-            (self.current_width + 40, int(open_height) + 40), pygame.SRCALPHA
-        )
-        pygame.draw.ellipse(mask_surf, (255, 255, 255, 255), (20, 20, self.current_width, int(open_height)))
-        clip_surf.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        surface.blit(clip_surf, (blit_x, blit_y))
-
+        # Eyelid overlay (blink / sleepy)
         if self.current_eyelid > 0.01:
-            lid_height = int(open_height * self.current_eyelid)
+            lid_height = int(eye_h * self.current_eyelid)
             if lid_height > 0:
                 lid_rect = pygame.Rect(
-                    cx - self.current_width // 2 - 2,
-                    cy - int(open_height) // 2 - 2,
-                    self.current_width + 4, lid_height,
+                    cx - eye_w // 2 - 2, cy - eye_h // 2 - 2,
+                    eye_w + 4, lid_height,
                 )
-                pygame.draw.rect(surface, COLOR_BG, lid_rect)
+                pygame.draw.rect(surface, COLOR_BG, lid_rect, border_radius=corner_r)
 
+        # Eyebrow
         if style.eyebrow_visible:
             brow_y = cy + style.eyebrow_offset_y
-            brow_len = self.current_width * 0.5
+            brow_len = eye_w * 0.5
             angle = style.eyebrow_angle
             if self.flipped:
                 angle = -angle
@@ -523,12 +473,13 @@ class Eye:
             by2 = brow_y + brow_len * math.sin(angle)
             pygame.draw.line(surface, COLOR_EYEBROW, (int(bx1), int(by1)), (int(bx2), int(by2)), 4)
 
+        # Blush
         if style.blush_visible:
-            blush_color = (255, 120, 120, 60)
             blush_surf = pygame.Surface((50, 25), pygame.SRCALPHA)
+            blush_color = (255, 120, 120, 60)
             pygame.draw.ellipse(blush_surf, blush_color, (0, 0, 50, 25))
             blush_x = cx - 25 + (-20 if not self.flipped else 20)
-            blush_y = cy + int(open_height) // 2 + 5
+            blush_y = cy + eye_h // 2 - 5
             surface.blit(blush_surf, (blush_x, blush_y))
 
 
@@ -1354,7 +1305,7 @@ def main():
 
     # Parse --window flag for windowed mode (default 250x250, or custom WxH)
     window_mode = False
-    window_w, window_h = 250, 250
+    window_w, window_h = 320, 240
     if '--window' in sys.argv:
         idx = sys.argv.index('--window')
         window_mode = True
