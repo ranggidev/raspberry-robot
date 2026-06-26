@@ -306,9 +306,11 @@ class Expression(Enum):
 # =============================================================================
 @dataclass
 class EyeStyle:
-    eye_width: int = 130
+    eye_width: int = 140
     eye_height: int = 70
-    eyelid_openness: float = 0.0
+    eyelid_openness: float = 0.0      # Top eyelid drop (0-1), for sleepy/tired
+    bottom_lid_raise: float = 0.0    # Bottom eyelid rise (0-1), for happy
+    eyelid_angle: float = 0.0        # Angled top eyelid (0-1), for angry
     eye_tilt: float = 0.0
     eyebrow_offset_y: int = -60
     eyebrow_visible: bool = False
@@ -319,43 +321,52 @@ class EyeStyle:
 
 
 EXPRESSION_STYLES = {
+    # RoboEyes style: consistent base eye + eyelid overlays for distinct expressions
     Expression.NEUTRAL: EyeStyle(
         eye_width=140, eye_height=70,
-        eyelid_openness=0.0, eyebrow_visible=False,
+        eyelid_openness=0.0, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=False,
     ),
     Expression.HAPPY: EyeStyle(
-        eye_width=140, eye_height=55,
-        eyelid_openness=0.25, eyebrow_visible=True, eyebrow_offset_y=-65,
+        eye_width=140, eye_height=70,
+        eyelid_openness=0.0, bottom_lid_raise=0.35, eyelid_angle=0.0,
+        eyebrow_visible=True, eyebrow_offset_y=-65,
         eyebrow_angle=0.0, mouth_visible=True, mouth_type="smile",
         blush_visible=True,
     ),
     Expression.THINKING: EyeStyle(
-        eye_width=135, eye_height=65,
-        eyelid_openness=0.1, eyebrow_visible=True, eyebrow_offset_y=-70,
+        eye_width=140, eye_height=70,
+        eyelid_openness=0.15, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=True, eyebrow_offset_y=-70,
         eyebrow_angle=0.15,
     ),
     Expression.SURPRISED: EyeStyle(
         eye_width=155, eye_height=85,
-        eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-80,
+        eyelid_openness=0.0, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=True, eyebrow_offset_y=-80,
         eyebrow_angle=-0.1,
     ),
     Expression.SLEEPY: EyeStyle(
         eye_width=140, eye_height=70,
-        eyelid_openness=0.55, eyebrow_visible=False,
+        eyelid_openness=0.55, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=False,
     ),
     Expression.ANGRY: EyeStyle(
-        eye_width=130, eye_height=62,
-        eyelid_openness=0.15, eyebrow_visible=True, eyebrow_offset_y=-55,
+        eye_width=140, eye_height=70,
+        eyelid_openness=0.0, bottom_lid_raise=0.0, eyelid_angle=0.5,
+        eyebrow_visible=True, eyebrow_offset_y=-55,
         eyebrow_angle=0.35, eye_tilt=0.08,
     ),
     Expression.LISTENING: EyeStyle(
         eye_width=145, eye_height=78,
-        eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-75,
+        eyelid_openness=0.0, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=True, eyebrow_offset_y=-75,
         eyebrow_angle=-0.05,
     ),
     Expression.SPEAKING: EyeStyle(
         eye_width=140, eye_height=75,
-        eyelid_openness=0.0, eyebrow_visible=True, eyebrow_offset_y=-68,
+        eyelid_openness=0.0, bottom_lid_raise=0.0, eyelid_angle=0.0,
+        eyebrow_visible=True, eyebrow_offset_y=-68,
         eyebrow_angle=0.0, mouth_visible=True, mouth_type="talking",
     ),
 }
@@ -370,9 +381,11 @@ class Eye:
         self.center_y = center_y
         self.flipped = flipped
 
-        self.current_width = 130.0
+        self.current_width = 140.0
         self.current_height = 70.0
-        self.current_eyelid = 0.0
+        self.current_eyelid = 0.0        # Top eyelid drop (0-1)
+        self.current_bottom_lid = 0.0   # Bottom eyelid rise (0-1)
+        self.current_eyelid_angle = 0.0 # Angled eyelid (0-1)
         self.current_tilt = 0.0
 
         self.look_x = 0.0
@@ -421,6 +434,8 @@ class Eye:
         self.current_height = lerp(self.current_height, effective_height, spd)
 
         self.current_eyelid = lerp(self.current_eyelid, total_eyelid, spd * 1.5)
+        self.current_bottom_lid = lerp(self.current_bottom_lid, style.bottom_lid_raise, spd * 1.5)
+        self.current_eyelid_angle = lerp(self.current_eyelid_angle, style.eyelid_angle, spd * 1.5)
         self.current_tilt = lerp(self.current_tilt, style.eye_tilt, spd)
 
         self.look_x = lerp(self.look_x, self.target_look_x, 3.0 * dt)
@@ -468,7 +483,9 @@ class Eye:
         # Thin border for definition
         pygame.draw.rect(surface, (200, 200, 220), eye_rect, width=2, border_radius=corner_r)
 
-        # Eyelid overlay (blink / sleepy)
+        # === Eyelid overlays (RoboEyes style — background-colored cuts) ===
+
+        # Top eyelid (for SLEEPY / blink)
         if self.current_eyelid > 0.01:
             lid_height = int(eye_h * self.current_eyelid)
             if lid_height > 0:
@@ -477,6 +494,36 @@ class Eye:
                     eye_w + 4, lid_height,
                 )
                 pygame.draw.rect(surface, COLOR_BG, lid_rect, border_radius=corner_r)
+
+        # Bottom eyelid (for HAPPY — squint from bottom)
+        if self.current_bottom_lid > 0.01:
+            lid_height = int(eye_h * self.current_bottom_lid)
+            if lid_height > 0:
+                lid_rect = pygame.Rect(
+                    cx - eye_w // 2 - 2, cy + eye_h // 2 - lid_height + 2,
+                    eye_w + 4, lid_height,
+                )
+                pygame.draw.rect(surface, COLOR_BG, lid_rect, border_radius=corner_r)
+
+        # Angled eyelid (for ANGRY — slants from outer top toward center)
+        if self.current_eyelid_angle > 0.01:
+            outer_drop = int(eye_h * self.current_eyelid_angle * 0.6)
+            inner_drop = int(eye_h * self.current_eyelid_angle * 0.1)
+            if not self.flipped:  # Left eye: outer = left side
+                pts = [
+                    (cx - eye_w // 2, cy - eye_h // 2),
+                    (cx + eye_w // 2, cy - eye_h // 2),
+                    (cx + eye_w // 2, cy - eye_h // 2 + inner_drop),
+                    (cx - eye_w // 2, cy - eye_h // 2 + outer_drop),
+                ]
+            else:  # Right eye: outer = right side
+                pts = [
+                    (cx - eye_w // 2, cy - eye_h // 2),
+                    (cx + eye_w // 2, cy - eye_h // 2),
+                    (cx + eye_w // 2, cy - eye_h // 2 + outer_drop),
+                    (cx - eye_w // 2, cy - eye_h // 2 + inner_drop),
+                ]
+            pygame.draw.polygon(surface, COLOR_BG, pts)
 
         # Eyebrow
         if style.eyebrow_visible:
