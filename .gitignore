@@ -1,0 +1,21 @@
+# Large model files (download separately)
+vosk-model/
+vosk-model-id/
+vosk-model.zip
+vosk-model-id.zip
+
+# Piper binaries and voice models
+piper/
+piper-voices/
+
+# Generated files
+*.wav
+*.pyc
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test_tts*.wav
