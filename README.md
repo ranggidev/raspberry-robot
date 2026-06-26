@@ -135,9 +135,11 @@ python3 robot_eyes.py
 ### Command Line Options
 
 ```bash
-python3 robot_eyes.py              # Auto-detect mic, fallback ke demo
-python3 robot_eyes.py --demo       # Force demo mode (tanpa mic)
-python3 robot_eyes.py --mic        # Force real microphone mode
+python3 robot_eyes.py                      # Auto-detect mic, fallback ke demo
+python3 robot_eyes.py --demo               # Force demo mode (tanpa mic)
+python3 robot_eyes.py --mic                # Force real microphone mode
+python3 robot_eyes.py --window             # Window mode 250×250
+python3 robot_eyes.py --window 320x240     # Window mode custom size
 ```
 
 ---

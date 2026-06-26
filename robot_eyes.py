@@ -108,6 +108,7 @@ TTS_VOICES = {
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
 FPS = 60
+FONT_SCALE = 1.0  # Overridden in --window mode to scale fonts
 
 # Colors
 COLOR_BG = (10, 10, 30)
@@ -742,7 +743,7 @@ class RobotFace:
                 pygame.draw.circle(dot_surf, (COLOR_IRIS[0], COLOR_IRIS[1], COLOR_IRIS[2], alpha), (size, size), size)
                 surface.blit(dot_surf, (int(bx) - size, int(by) - size))
 
-        font = pygame.font.SysFont("monospace", 14, bold=True)
+        font = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)), bold=True)
         label = font.render(f"[{self.expression.name}]  V=voice  G=auto  T=speak  L=lang  SPACE=blink", True, (60, 60, 100))
         surface.blit(label, (10, SCREEN_HEIGHT - 15))
 
@@ -794,7 +795,7 @@ def draw_audio_bar(surface: pygame.Surface, level: float, x: int, y: int,
         pygame.draw.rect(surface, color, fill_rect, border_radius=4)
 
     # Label
-    font = pygame.font.SysFont("monospace", 12)
+    font = pygame.font.SysFont("monospace", max(1, int(12 * FONT_SCALE)))
     label = "🎤 LIVE" if PYAUDIO_AVAILABLE else "🎮 DEMO"
     text = font.render(label, True, (80, 80, 120))
     surface.blit(text, (x + width + 10, y - 2))
@@ -1350,7 +1351,31 @@ def main():
     pygame.init()
 
     os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+
+    # Parse --window flag for windowed mode (default 250x250, or custom WxH)
+    window_mode = False
+    window_w, window_h = 250, 250
+    if '--window' in sys.argv:
+        idx = sys.argv.index('--window')
+        window_mode = True
+        if idx + 1 < len(sys.argv) and 'x' in sys.argv[idx + 1]:
+            parts = sys.argv[idx + 1].split('x')
+            try:
+                window_w = int(parts[0])
+                window_h = int(parts[1])
+            except (ValueError, IndexError):
+                pass
+
+    if window_mode:
+        screen = pygame.display.set_mode((window_w, window_h))
+        internal_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        scale_factor = min(window_w / SCREEN_WIDTH, window_h / SCREEN_HEIGHT)
+        global FONT_SCALE
+        FONT_SCALE = max(2.0, 1.0 / scale_factor) if scale_factor > 0 else 3.2
+    else:
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+        internal_surf = screen
+
     pygame.display.set_caption("Robot Eyes - Talking Mode")
     clock = pygame.time.Clock()
 
@@ -1522,62 +1547,62 @@ def main():
             sp.update(dt)
 
         # Draw
-        screen.fill(COLOR_BG)
+        internal_surf.fill(COLOR_BG)
         for sp in sparkles:
-            sp.draw(screen)
-        face.draw(screen)
+            sp.draw(internal_surf)
+        face.draw(internal_surf)
 
         # Audio level bar
-        draw_audio_bar(screen, audio.smooth_level, 300, SCREEN_HEIGHT - 28)
+        draw_audio_bar(internal_surf, audio.smooth_level, 300, SCREEN_HEIGHT - 28)
 
         # Voice recognition text display
         if voice_active:
             display_text = voice.get_display_text()
             if display_text:
-                font = pygame.font.SysFont("monospace", 20, bold=True)
+                font = pygame.font.SysFont("monospace", max(1, int(20 * FONT_SCALE)), bold=True)
                 # Truncate if too long
                 max_chars = 50
                 if len(display_text) > max_chars:
                     display_text = "..." + display_text[-(max_chars - 3):]
                 text_surf = font.render(display_text, True, COLOR_IRIS)
                 text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, 40))
-                screen.blit(text_surf, text_rect)
+                internal_surf.blit(text_surf, text_rect)
 
             # Listening indicator (pulsing dot)
             pulse = 0.5 + 0.5 * math.sin(time.time() * 4)
             dot_alpha = int(80 + 175 * pulse)
             dot_surf = pygame.Surface((12, 12), pygame.SRCALPHA)
             pygame.draw.circle(dot_surf, (255, 60, 60, dot_alpha), (6, 6), 6)
-            screen.blit(dot_surf, (SCREEN_WIDTH // 2 - 6, 55))
-            font_sm = pygame.font.SysFont("monospace", 12)
+            internal_surf.blit(dot_surf, (SCREEN_WIDTH // 2 - 6, 55))
+            font_sm = pygame.font.SysFont("monospace", max(1, int(12 * FONT_SCALE)))
             rec_label = font_sm.render("LISTENING", True, (200, 80, 80))
-            screen.blit(rec_label, (SCREEN_WIDTH // 2 + 12, 52))
+            internal_surf.blit(rec_label, (SCREEN_WIDTH // 2 + 12, 52))
 
         # Voice mode indicator (top-right corner, non-overlapping)
         if voice_active:
-            font_v = pygame.font.SysFont("monospace", 14)
+            font_v = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)))
             voice_label = font_v.render("🎙️ VOICE ACTIVE", True, (100, 200, 100))
-            screen.blit(voice_label, (SCREEN_WIDTH - voice_label.get_width() - 10, 10))
+            internal_surf.blit(voice_label, (SCREEN_WIDTH - voice_label.get_width() - 10, 10))
 
         # Language indicator (top-right, below voice indicator)
-        lang_font = pygame.font.SysFont("monospace", 14)
+        lang_font = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)))
         lang_label = lang_font.render(f"🌐 {speaker.label}", True, (100, 150, 220))
         lang_y = 10 if not voice_active else 30
-        screen.blit(lang_label, (SCREEN_WIDTH - lang_label.get_width() - 10, lang_y))
+        internal_surf.blit(lang_label, (SCREEN_WIDTH - lang_label.get_width() - 10, lang_y))
 
         # Speaking indicator
         if speaker.is_speaking:
-            speak_font = pygame.font.SysFont("monospace", 14)
+            speak_font = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)))
             speak_label = speak_font.render("🔊 SPEAKING", True, (255, 200, 50))
-            screen.blit(speak_label, (SCREEN_WIDTH - speak_label.get_width() - 10, lang_y + 20))
+            internal_surf.blit(speak_label, (SCREEN_WIDTH - speak_label.get_width() - 10, lang_y + 20))
 
         # Brain thinking indicator
         if brain.is_thinking:
-            think_font = pygame.font.SysFont("monospace", 14)
+            think_font = pygame.font.SysFont("monospace", max(1, int(14 * FONT_SCALE)))
             # Animated thinking dots
             dots = "." * (int(time.time() * 3) % 4)
             think_label = think_font.render(f"🧠 THINKING{dots}", True, (200, 150, 255))
-            screen.blit(think_label, (SCREEN_WIDTH - think_label.get_width() - 10, lang_y + 40))
+            internal_surf.blit(think_label, (SCREEN_WIDTH - think_label.get_width() - 10, lang_y + 40))
 
         # Brain status indicator (top-left, below expression)
         brain_status_color = (100, 200, 100) if brain.available else (100, 60, 60)
@@ -1585,20 +1610,31 @@ def main():
         if auto_respond:
             brain_text += " | Auto-respond: ON"
             brain_status_color = (100, 255, 150)
-        brain_font = pygame.font.SysFont("monospace", 12)
+        brain_font = pygame.font.SysFont("monospace", max(1, int(12 * FONT_SCALE)))
         brain_label = brain_font.render(brain_text, True, brain_status_color)
-        screen.blit(brain_label, (10, SCREEN_HEIGHT - 50))
+        internal_surf.blit(brain_label, (10, SCREEN_HEIGHT - 50))
 
         # AI response text display (center, below eyes)
         response_text = brain.get_response_display_text()
         if response_text:
-            resp_font = pygame.font.SysFont("monospace", 16, bold=True)
+            resp_font = pygame.font.SysFont("monospace", max(1, int(16 * FONT_SCALE)), bold=True)
             max_chars = 60
             if len(response_text) > max_chars:
                 response_text = response_text[:max_chars - 3] + "..."
             resp_surf = resp_font.render(response_text, True, (200, 200, 255))
             resp_rect = resp_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 70))
-            screen.blit(resp_surf, resp_rect)
+            internal_surf.blit(resp_surf, resp_rect)
+
+        # Window mode: scale internal surface to window with letterboxing
+        if window_mode:
+            scale = min(window_w / SCREEN_WIDTH, window_h / SCREEN_HEIGHT)
+            scaled_w = max(1, int(SCREEN_WIDTH * scale))
+            scaled_h = max(1, int(SCREEN_HEIGHT * scale))
+            scaled = pygame.transform.scale(internal_surf, (scaled_w, scaled_h))
+            x_off = (window_w - scaled_w) // 2
+            y_off = (window_h - scaled_h) // 2
+            screen.fill((0, 0, 0))
+            screen.blit(scaled, (x_off, y_off))
 
         pygame.display.flip()
 
