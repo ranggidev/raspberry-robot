@@ -37,9 +37,14 @@ import struct
 import array
 import threading
 import subprocess
+import urllib.request
+import urllib.error
 from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
+
+# Configuration file for API key
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 # Optional: pyaudio for real microphone input
 try:
@@ -737,9 +742,9 @@ class RobotFace:
                 pygame.draw.circle(dot_surf, (COLOR_IRIS[0], COLOR_IRIS[1], COLOR_IRIS[2], alpha), (size, size), size)
                 surface.blit(dot_surf, (int(bx) - size, int(by) - size))
 
-        font = pygame.font.SysFont("monospace", 16, bold=True)
-        label = font.render(f"[{self.expression.name}]  V=voice  T=speak  L=lang  SPACE=blink", True, (60, 60, 100))
-        surface.blit(label, (10, SCREEN_HEIGHT - 30))
+        font = pygame.font.SysFont("monospace", 14, bold=True)
+        label = font.render(f"[{self.expression.name}]  V=voice  G=auto  T=speak  L=lang  SPACE=blink", True, (60, 60, 100))
+        surface.blit(label, (10, SCREEN_HEIGHT - 15))
 
 
 # =============================================================================
@@ -981,6 +986,226 @@ class Speaker:
 
 
 # =============================================================================
+# Brain (LLM via OpenRouter API)
+# =============================================================================
+class Brain:
+    """
+    AI Brain using OpenRouter API (Gemma model).
+    Calls the LLM in a background thread so it doesn't block animation.
+    Maintains conversation history for context.
+    """
+
+    API_URL = "https://openrouter.ai/api/v1/chat/completions"
+    DEFAULT_MODEL = "google/gemma-2-9b-it:free"
+    SYSTEM_PROMPT = (
+        "You are a cute robot assistant with big animated eyes. "
+        "You are friendly, helpful, and speak in short sentences (1-2 sentences max). "
+        "Keep responses brief since they will be spoken aloud via TTS. "
+        "If asked in Indonesian, reply in Indonesian. If asked in English, reply in English. "
+        "You live on a Raspberry Pi and love chatting with your owner."
+    )
+
+    def __init__(self, api_key: str = "", model: str = ""):
+        self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.available = bool(self.api_key)
+        self.is_thinking = False
+        self.response_text = ""           # Last LLM response
+        self.last_user_text = ""           # Last user input
+        self.response_time = 0.0           # Timestamp of last response
+        self.response_display_timeout = 8.0  # Seconds to show response on screen
+
+        # Conversation history (limited to last 10 exchanges)
+        self.history: List[dict] = []
+        self.max_history = 10
+
+        # Background thread for LLM calls
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._request_queue: _queue.Queue = _queue.Queue(maxsize=5)
+        self._response_queue: _queue.Queue = _queue.Queue(maxsize=5)
+
+        # Callback for when response is ready
+        self.on_response: Optional[callable] = None
+
+        # Try loading API key from config file if not provided
+        if not self.api_key:
+            self._load_config()
+
+        self._update_availability()
+
+    def _load_config(self):
+        """Load API key from config.json if it exists."""
+        if os.path.exists(CONFIG_FILE):
+            try:
+                import json as _json_mod
+                with open(CONFIG_FILE, "r") as f:
+                    config = _json_mod.load(f)
+                self.api_key = config.get("openrouter_api_key", "")
+                if config.get("model"):
+                    self.model = config["model"]
+            except Exception:
+                pass
+
+    def _save_config(self):
+        """Save API key to config.json."""
+        try:
+            import json as _json_mod
+            config = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r") as f:
+                    config = _json_mod.load(f)
+            config["openrouter_api_key"] = self.api_key
+            config["model"] = self.model
+            with open(CONFIG_FILE, "w") as f:
+                _json_mod.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"   ⚠️  Failed to save config: {e}")
+
+    def _update_availability(self):
+        """Check if Brain is ready to use."""
+        self.available = bool(self.api_key)
+        if self.available:
+            print(f"   🧠 AI Brain ready: {self.model}")
+        else:
+            print("   ⚠️  AI Brain disabled (no API key)")
+            print("   Set OPENROUTER_API_KEY env var or create config.json")
+
+    def set_api_key(self, key: str):
+        """Set the API key and save to config."""
+        self.api_key = key.strip()
+        self._update_availability()
+        if self.api_key:
+            self._save_config()
+
+    def think(self, user_text: str):
+        """Send user text to LLM in background thread. Non-blocking."""
+        if not self.available or not user_text.strip():
+            return
+
+        self.last_user_text = user_text
+
+        if self._thread is None or not self._thread.is_alive():
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._think_loop, daemon=True)
+            self._thread.start()
+
+        try:
+            self._request_queue.put_nowait(user_text)
+        except _queue.Full:
+            print("   ⚠️  Brain request queue full")
+
+    def stop(self):
+        """Stop the background thread."""
+        self._stop_event.set()
+        self.is_thinking = False
+        while not self._request_queue.empty():
+            try:
+                self._request_queue.get_nowait()
+            except _queue.Empty:
+                break
+        while not self._response_queue.empty():
+            try:
+                self._response_queue.get_nowait()
+            except _queue.Empty:
+                break
+
+    def _think_loop(self):
+        """Background thread: process LLM requests."""
+        while not self._stop_event.is_set():
+            try:
+                user_text = self._request_queue.get(timeout=0.5)
+            except _queue.Empty:
+                continue
+
+            self.is_thinking = True
+            response = self._call_api(user_text)
+            self.is_thinking = False
+
+            if response:
+                self.response_text = response
+                self.response_time = time.time()
+                print(f"   🧠 AI: {response}")
+
+                # Add to history
+                self.history.append({"role": "user", "content": user_text})
+                self.history.append({"role": "assistant", "content": response})
+                # Trim history
+                if len(self.history) > self.max_history * 2:
+                    self.history = self.history[-(self.max_history * 2):]
+
+                # Notify callback
+                if self.on_response:
+                    try:
+                        self.on_response(response)
+                    except Exception:
+                        pass
+
+    def _call_api(self, user_text: str) -> str:
+        """Make the actual API call to OpenRouter."""
+        try:
+            messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+            messages.extend(self.history)
+            messages.append({"role": "user", "content": user_text})
+
+            payload = _json.dumps({
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 150,
+                "temperature": 0.7,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                self.API_URL,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                    "HTTP-Referer": "https://github.com/robot-eyes-pi",
+                    "X-OpenRouter-Title": "Robot Eyes AI Assistant",
+                },
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                return data["choices"][0]["message"]["content"].strip()
+
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            print(f"   ⚠️  API error {e.code}: {body[:200]}")
+            return ""
+        except urllib.error.URLError as e:
+            print(f"   ⚠️  Network error: {e.reason}")
+            return ""
+        except Exception as e:
+            print(f"   ⚠️  LLM error: {e}")
+            return ""
+
+    def get_response_display_text(self) -> str:
+        """Return response text to display (with timeout)."""
+        if not self.response_text:
+            return ""
+        elapsed = time.time() - self.response_time
+        if elapsed > self.response_display_timeout:
+            return ""
+        return self.response_text
+
+    def clear_history(self):
+        """Clear conversation history."""
+        self.history.clear()
+        print("   🧠 Conversation history cleared")
+
+    def update(self, dt: float):
+        """Update brain state."""
+        pass  # Most state is managed by the background thread
+
+    def cleanup(self):
+        """Stop background thread."""
+        self.stop()
+
+
+# =============================================================================
 # Voice Recognizer (Vosk STT - threaded, non-blocking)
 # =============================================================================
 class VoiceRecognizer:
@@ -1148,6 +1373,17 @@ def main():
     # Initialize Piper TTS speaker
     speaker = Speaker()
 
+    # Initialize AI Brain (OpenRouter LLM)
+    brain = Brain()
+    auto_respond = False  # Auto pipeline: STT → LLM → TTS
+
+    # Wire Brain response to TTS
+    def on_brain_response(response_text: str):
+        """Called from Brain thread when LLM responds."""
+        if response_text and speaker.available:
+            speaker.speak(response_text)
+    brain.on_response = on_brain_response
+
     key_map = {
         pygame.K_1: Expression.NEUTRAL,
         pygame.K_2: Expression.HAPPY,
@@ -1157,12 +1393,13 @@ def main():
         pygame.K_6: Expression.LISTENING,
     }
 
-    print("🤖 Robot Eyes + Voice Assistant!")
+    print("🤖 Robot Eyes + AI Voice Assistant!")
     print(f"   Mode: {'🎮 Demo (simulated audio)' if audio.demo_mode else '🎤 Live Mic'}")
     print(f"   Vosk STT: {'✅ Ready' if voice.model else '❌ Not available'}")
     print(f"   Piper TTS: {'✅ Ready' if speaker.available else '❌ Not available'}")
+    print(f"   AI Brain: {'✅ Ready' if brain.available else '❌ No API key (set in config.json)'}")
     print("   Controls:")
-    print("   1-6=expr  V=voice  T=speak  L=lang  D=demo  SPACE=blink  ESC/Q=Quit")
+    print("   1-6=expr  V=voice  G=auto-respond  T=speak  L=lang  SPACE=blink  ESC/Q=Quit")
 
     running = True
     while running:
@@ -1203,12 +1440,26 @@ def main():
                 elif event.key == pygame.K_l:
                     # Toggle TTS language
                     speaker.toggle_language()
+                elif event.key == pygame.K_g:
+                    # Toggle auto-respond mode (STT → LLM → TTS pipeline)
+                    auto_respond = not auto_respond
+                    print(f"   🤖 Auto-respond: {'ON' if auto_respond else 'OFF'}")
+                    if auto_respond and not voice_active and voice.model:
+                        # Auto-start voice recognition when enabling auto-respond
+                        voice.start(audio_detector=audio)
+                        voice_active = True
+                        face.auto_expression = False
+                        face.set_expression(Expression.LISTENING)
+                        print("   🎙️  Voice recognition AUTO-STARTED")
                 elif event.key == pygame.K_v:
                     # Toggle voice recognition
                     if voice.model:
                         if voice_active:
                             voice.stop()
                             voice_active = False
+                            if auto_respond:
+                                auto_respond = False
+                                print("   🤖 Auto-respond OFF (voice stopped)")
                             print("   🎙️  Voice recognition STOPPED")
                         else:
                             voice.start(audio_detector=audio)
@@ -1218,6 +1469,9 @@ def main():
                             print("   🎙️  Voice recognition STARTED")
                     else:
                         print("   ⚠️  Voice not available (need vosk + mic)")
+                elif event.key == pygame.K_c:
+                    # Clear brain conversation history
+                    brain.clear_history()
 
         # Update audio
         audio.update(dt)
@@ -1239,13 +1493,28 @@ def main():
         elif audio.is_talking:
             face.mouth.current_type = "talking"
 
+        # Auto-respond pipeline: STT → LLM → TTS
+        if auto_respond and voice_active and voice.final_text:
+            user_text = voice.final_text
+            voice.final_text = ""  # Consume the text
+            if user_text.strip() and not brain.is_thinking and not speaker.is_speaking:
+                print(f"   🤖 Auto-respond: '{user_text}' → LLM...")
+                face.set_expression(Expression.THINKING)
+                brain.think(user_text)
+
         # Voice recognition update (clear stale text)
         if voice_active:
             voice.update(dt)
-            # Auto-set LISTENING expression while voice is active
-            # But respect manual expression changes from user pressing 1-5
-            if face.expression != Expression.LISTENING:
-                face.set_expression(Expression.LISTENING)
+            # Show LISTENING expression when listening (unless thinking or speaking)
+            if not brain.is_thinking and not speaker.is_speaking:
+                if face.expression != Expression.LISTENING:
+                    face.set_expression(Expression.LISTENING)
+
+        # Brain state
+        if brain.is_thinking and not speaker.is_speaking:
+            face.set_expression(Expression.THINKING)
+        elif speaker.is_speaking:
+            face.set_expression(Expression.SPEAKING)
 
         # Update
         face.update(dt)
@@ -1302,9 +1571,39 @@ def main():
             speak_label = speak_font.render("🔊 SPEAKING", True, (255, 200, 50))
             screen.blit(speak_label, (SCREEN_WIDTH - speak_label.get_width() - 10, lang_y + 20))
 
+        # Brain thinking indicator
+        if brain.is_thinking:
+            think_font = pygame.font.SysFont("monospace", 14)
+            # Animated thinking dots
+            dots = "." * (int(time.time() * 3) % 4)
+            think_label = think_font.render(f"🧠 THINKING{dots}", True, (200, 150, 255))
+            screen.blit(think_label, (SCREEN_WIDTH - think_label.get_width() - 10, lang_y + 40))
+
+        # Brain status indicator (top-left, below expression)
+        brain_status_color = (100, 200, 100) if brain.available else (100, 60, 60)
+        brain_text = f"🧠 AI: {'ON' if brain.available else 'OFF'}"
+        if auto_respond:
+            brain_text += " | Auto-respond: ON"
+            brain_status_color = (100, 255, 150)
+        brain_font = pygame.font.SysFont("monospace", 12)
+        brain_label = brain_font.render(brain_text, True, brain_status_color)
+        screen.blit(brain_label, (10, SCREEN_HEIGHT - 50))
+
+        # AI response text display (center, below eyes)
+        response_text = brain.get_response_display_text()
+        if response_text:
+            resp_font = pygame.font.SysFont("monospace", 16, bold=True)
+            max_chars = 60
+            if len(response_text) > max_chars:
+                response_text = response_text[:max_chars - 3] + "..."
+            resp_surf = resp_font.render(response_text, True, (200, 200, 255))
+            resp_rect = resp_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 70))
+            screen.blit(resp_surf, resp_rect)
+
         pygame.display.flip()
 
     # Cleanup
+    brain.cleanup()
     speaker.cleanup()
     if voice_active:
         voice.stop()
