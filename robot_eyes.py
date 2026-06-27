@@ -55,14 +55,14 @@ except ImportError:
 
 # Queue for audio data sharing between AudioLevelDetector and VoiceRecognizer
 import queue as _queue
+import json as _json
 
-# Optional: vosk for speech-to-text
+# Optional: faster-whisper for speech-to-text
 try:
-    import vosk
-    import json as _json
-    VOSK_AVAILABLE = True
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
 except ImportError:
-    VOSK_AVAILABLE = False
+    WHISPER_AVAILABLE = False
 
 # Piper TTS paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1262,16 +1262,17 @@ class Brain:
 
 
 # =============================================================================
-# Voice Recognizer (Vosk STT - threaded, non-blocking)
+# Voice Recognizer (Whisper STT - threaded, non-blocking)
 # =============================================================================
 class VoiceRecognizer:
     """
-    Runs Vosk speech-to-text in a background thread.
+    Runs Whisper speech-to-text in a background thread.
     Receives audio data from AudioLevelDetector via a shared queue
     (no separate mic stream — avoids device contention).
+    Uses faster-whisper (CTranslate2) for efficient inference.
     """
 
-    def __init__(self, model_path: str = "vosk-model", sample_rate: int = 48000):
+    def __init__(self, model_path: str = "/app/whisper-model", sample_rate: int = 48000):
         self.model_path = model_path
         self.sample_rate = sample_rate
         self.running = False
@@ -1279,40 +1280,34 @@ class VoiceRecognizer:
 
         # Recognition state
         self.is_listening = False
-        self.partial_text = ""           # Live partial result
-        self.final_text = ""             # Last complete sentence
-        self.final_text_time = 0.0       # Timestamp of last final text
-        self.silence_timeout = 3.0       # Seconds before clearing final text
-        self.all_results: List[str] = []  # History of final results
-        self.recognizer = None
+        self.partial_text = ""
+        self.final_text = ""
+        self.final_text_time = 0.0
+        self.silence_timeout = 3.0
+        self.all_results: List[str] = []
         self.model = None
 
-        # Audio queue — fed by AudioLevelDetector subscriber callback
-        self._audio_queue: _queue.Queue = _queue.Queue(maxsize=50)
+        # Audio buffer — accumulate audio for batch processing
+        self._audio_queue: _queue.Queue = _queue.Queue(maxsize=100)
+        self._audio_buffer = bytearray()
+        self._buffer_duration = 2.0  # Process every 2 seconds of audio
+        self._bytes_per_second = sample_rate * 2  # 16-bit mono = 2 bytes/sample
 
-        self._init_vosk()
+        self._init_whisper()
 
-    def _init_vosk(self):
-        """Initialize Vosk model (no mic stream — audio comes from queue)."""
-        if not VOSK_AVAILABLE:
-            print("   ⚠️  vosk not installed — STT disabled")
-            print("   Install with: pip3 install vosk")
-            return
-
-        if not os.path.exists(self.model_path):
-            print(f"   ⚠️  Vosk model not found at '{self.model_path}'")
-            print("   Download from: https://alphacephei.com/vosk/models")
+    def _init_whisper(self):
+        """Initialize Whisper model."""
+        if not WHISPER_AVAILABLE:
+            print("   ⚠️  faster-whisper not installed — STT disabled")
+            print("   Install with: pip3 install faster-whisper")
             return
 
         try:
-            print(f"   🧠 Loading Vosk model from {self.model_path}...")
-            vosk.SetLogLevel(-1)  # Suppress verbose logs
-            self.model = vosk.Model(self.model_path)
-            self.recognizer = vosk.KaldiRecognizer(self.model, self.sample_rate)
-            self.recognizer.SetWords(True)
-            print("   ✅ Vosk model loaded!")
+            print(f"   🧠 Loading Whisper model: {self.model_path}...")
+            self.model = WhisperModel(self.model_path, device="cpu", compute_type="int8")
+            print("   ✅ Whisper model loaded!")
         except Exception as e:
-            print(f"   ⚠️  Failed to load Vosk model: {e}")
+            print(f"   ⚠️  Failed to load Whisper model: {e}")
 
     def _feed_audio(self, data: bytes):
         """Callback: receives raw PCM audio from AudioLevelDetector."""
@@ -1320,17 +1315,16 @@ class VoiceRecognizer:
             try:
                 self._audio_queue.put_nowait(data)
             except _queue.Full:
-                pass  # Drop frames if queue is full
+                pass
 
     def start(self, audio_detector: Optional['AudioLevelDetector'] = None):
-        """Start the recognition thread. Subscribes to audio_detector for mic data."""
+        """Start the recognition thread."""
         if self.running:
-            return  # Guard against double-start
+            return
         if self.model is None:
-            print("   ⚠️  Vosk model not loaded — cannot start STT")
+            print("   ⚠️  Whisper model not loaded — cannot start STT")
             return
 
-        # Subscribe to mic audio from AudioLevelDetector
         if audio_detector and audio_detector.mic_available:
             audio_detector.subscribe_audio(self._feed_audio)
             self._audio_detector_ref = audio_detector
@@ -1342,22 +1336,21 @@ class VoiceRecognizer:
         self.is_listening = True
         self.final_text = ""
         self.partial_text = ""
+        self._audio_buffer = bytearray()
         self.thread = threading.Thread(target=self._recognize_loop, daemon=True)
         self.thread.start()
-        print("   🎙️  Voice recognition started!")
+        print("   🎙️  Voice recognition (Whisper) started!")
 
     def stop(self):
         """Stop the recognition thread and unsubscribe from audio."""
         self.running = False
         self.is_listening = False
         if self.thread:
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=3.0)
             self.thread = None
-        # Unsubscribe from audio feed
         if hasattr(self, '_audio_detector_ref') and self._audio_detector_ref:
             self._audio_detector_ref.unsubscribe_audio(self._feed_audio)
             self._audio_detector_ref = None
-        # Drain queue
         while not self._audio_queue.empty():
             try:
                 self._audio_queue.get_nowait()
@@ -1365,37 +1358,68 @@ class VoiceRecognizer:
                 break
 
     def _recognize_loop(self):
-        """Background thread: pull audio from queue and feed to Vosk."""
+        """Background thread: accumulate audio and run Whisper inference."""
         while self.running:
             try:
                 data = self._audio_queue.get(timeout=0.5)
             except _queue.Empty:
                 continue
 
-            if self.recognizer.AcceptWaveform(data):
-                result = _json.loads(self.recognizer.Result())
-                text = result.get("text", "").strip()
+            self._audio_buffer.extend(data)
+
+            # Process when we have enough audio (2 seconds)
+            if len(self._audio_buffer) >= self._bytes_per_second * self._buffer_duration:
+                self._process_buffer()
+
+    def _process_buffer(self):
+        """Run Whisper inference on accumulated audio buffer."""
+        if not self._audio_buffer:
+            return
+
+        # Convert 16-bit PCM to float32
+        audio_data = bytes(self._audio_buffer)
+        self._audio_buffer = bytearray()
+
+        import numpy as np
+        samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+        if len(samples) < 1600:  # Too short
+            return
+
+        try:
+            segments, info = self.model.transcribe(
+                samples,
+                language="id",
+                beam_size=5,
+                vad_filter=True,
+            )
+
+            text_parts = []
+            for segment in segments:
+                text = segment.text.strip()
                 if text:
-                    self.final_text = text
-                    self.final_text_time = time.time()
-                    self.all_results.append(text)
-                    print(f"   🗣️  [{text}]")
-                    self.partial_text = ""
-            else:
-                partial = _json.loads(self.recognizer.PartialResult())
-                self.partial_text = partial.get("partial", "")
+                    text_parts.append(text)
+
+            if text_parts:
+                full_text = " ".join(text_parts)
+                self.final_text = full_text
+                self.final_text_time = time.time()
+                self.all_results.append(full_text)
+                print(f"   🗣️  [{full_text}]")
+                self.partial_text = ""
+
+        except Exception as e:
+            print(f"   ⚠️  Whisper error: {e}")
 
     def update(self, dt: float):
         """Clear stale final text after silence timeout."""
-        if self.final_text and not self.partial_text:
+        if self.final_text:
             elapsed = time.time() - self.final_text_time
             if elapsed > self.silence_timeout:
                 self.final_text = ""
 
     def get_display_text(self) -> str:
-        """Return the current text to display (partial or final)."""
-        if self.partial_text:
-            return self.partial_text + "..."
+        """Return the current text to display."""
         return self.final_text
 
 
@@ -1476,7 +1500,7 @@ def main():
 
     print("🤖 Robot Eyes + AI Voice Assistant!")
     print(f"   Mode: {'🎮 Demo (simulated audio)' if audio.demo_mode else '🎤 Live Mic'}")
-    print(f"   Vosk STT: {'✅ Ready' if voice.model else '❌ Not available'}")
+    print(f"   Whisper STT: {'✅ Ready' if voice.model else '❌ Not available'}")
     print(f"   Piper TTS: {'✅ Ready' if speaker.available else '❌ Not available'}")
     print(f"   AI Brain (Ollama): {'✅ Ready' if brain.available else '❌ Not available'}")
     print("   Controls:")
@@ -1549,7 +1573,7 @@ def main():
                             face.set_expression(Expression.LISTENING)
                             print("   🎙️  Voice recognition STARTED")
                     else:
-                        print("   ⚠️  Voice not available (need vosk + mic)")
+                        print("   ⚠️  Voice not available (need whisper + mic)")
                 elif event.key == pygame.K_s:
                     # Toggle sweat drops (RoboEyes style)
                     face.sweat_enabled = not face.sweat_enabled

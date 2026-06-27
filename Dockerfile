@@ -22,13 +22,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Vosk model (English - no Indonesian model available)
-RUN wget -q https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -O /tmp/vosk-model.zip \
-    && unzip -q /tmp/vosk-model.zip -d /tmp \
-    && mv /tmp/vosk-model-small-en-us-0.15 /app/vosk-model \
-    && rm /tmp/vosk-model.zip
+# Convert Whisper model to CTranslate2 format
+RUN pip install --no-cache-dir transformers torch --extra-index-url https://download.pytorch.org/whl/cpu \
+    && python3 -c "from ctranslate2.converters import TransformersConverter; \
+       converter = TransformersConverter('openai/whisper-medium'); \
+       converter.convert('/app/whisper-model', quantization='int8', force=True)" \
+    && pip uninstall -y torch transformers safetensors accelerate -q \
+    && rm -rf /root/.cache/huggingface /root/.cache/torch
 
-# Download Piper TTS binary (x86_64)
+# Piper TTS binary (x86_64)
 RUN mkdir -p /app/piper/piper \
     && wget -q https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz -O /tmp/piper.tar.gz \
     && tar -xzf /tmp/piper.tar.gz -C /app/piper/piper/ --strip-components=1 \

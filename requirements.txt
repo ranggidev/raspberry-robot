@@ -1,3 +1,4 @@
 pygame
 pyaudio
-vosk
+faster-whisper
+numpy
