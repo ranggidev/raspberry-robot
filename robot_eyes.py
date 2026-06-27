@@ -1396,13 +1396,21 @@ class VoiceRecognizer:
                 samples,
                 language="id",
                 beam_size=5,
+                temperature=0,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
                 no_speech_threshold=0.6,
+                compression_ratio_threshold=2.4,
+                log_prob_threshold=-1.0,
+                condition_on_previous_text=False,
+                initial_prompt="Transkripsi bahasa Indonesia:",
             )
 
             text_parts = []
             for segment in segments:
+                # Filter low-confidence segments
+                if segment.no_speech_prob > 0.5:
+                    continue
                 text = segment.text.strip()
                 if text:
                     text_parts.append(text)
