@@ -31,7 +31,8 @@ RUN wget -q https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip 
 # Download Piper TTS binary (x86_64)
 RUN mkdir -p /app/piper/piper \
     && wget -q https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz -O /tmp/piper.tar.gz \
-    && tar -xzf /tmp/piper.tar.gz -C /app/piper/piper/ --strip-components=0 \
+    && tar -xzf /tmp/piper.tar.gz -C /app/piper/piper/ --strip-components=1 \
+    && chmod +x /app/piper/piper/piper \
     && rm /tmp/piper.tar.gz
 
 # Download Piper voice models (English + Indonesian)
