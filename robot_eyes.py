@@ -147,7 +147,7 @@ class AudioLevelDetector:
     via a callback, so only ONE mic stream is opened.
     """
 
-    def __init__(self, chunk_size: int = 256, sample_rate: int = 16000,
+    def __init__(self, chunk_size: int = 256, sample_rate: int = 48000,
                  channels: int = 1, demo_mode: bool = False):
         self.chunk_size = chunk_size
         self.sample_rate = sample_rate
@@ -1271,7 +1271,7 @@ class VoiceRecognizer:
     (no separate mic stream — avoids device contention).
     """
 
-    def __init__(self, model_path: str = "vosk-model", sample_rate: int = 16000):
+    def __init__(self, model_path: str = "vosk-model", sample_rate: int = 48000):
         self.model_path = model_path
         self.sample_rate = sample_rate
         self.running = False

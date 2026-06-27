@@ -6,11 +6,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     portaudio19-dev \
     alsa-utils \
     libasound2 \
+    libasound2-plugins \
     wget \
     unzip \
     gcc \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# ALSA config: route default device to real hardware mic (card 0, device 0, native rate 48kHz)
+RUN printf 'pcm.!default {\n    type plug\n    slave { pcm "hw:0,0" rate 48000 channels 1 }\n}\nctl.!default {\n    type hw\n    card 0\n}\n' > /etc/asound.conf
 
 WORKDIR /app
 
@@ -39,5 +43,5 @@ RUN mkdir -p /app/piper-voices \
 
 COPY robot_eyes.py .
 
-# Default: windowed demo mode (no hardware needed)
-CMD ["python3", "robot_eyes.py", "--window", "--demo"]
+# Default: windowed mode with real microphone
+CMD ["python3", "robot_eyes.py", "--window", "--mic"]
