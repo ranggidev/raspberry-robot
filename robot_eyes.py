@@ -1053,17 +1053,15 @@ class Speaker:
 
 
 # =============================================================================
-# Brain (LLM via OpenRouter API)
+# Brain (LLM via Ollama local)
 # =============================================================================
 class Brain:
     """
-    AI Brain using OpenRouter API (Gemma model).
+    AI Brain using local Ollama API.
     Calls the LLM in a background thread so it doesn't block animation.
     Maintains conversation history for context.
     """
 
-    API_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemma-2-9b-it:free"
     SYSTEM_PROMPT = (
         "You are a cute robot assistant with big animated eyes. "
         "You are friendly, helpful, and speak in short sentences (1-2 sentences max). "
@@ -1072,78 +1070,75 @@ class Brain:
         "You live on a Raspberry Pi and love chatting with your owner."
     )
 
-    def __init__(self, api_key: str = "", model: str = ""):
-        self.api_key = api_key
-        self.model = model or self.DEFAULT_MODEL
-        self.available = bool(self.api_key)
+    def __init__(self, base_url: str = "", model: str = ""):
+        self.base_url = base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.model = model or os.environ.get("OLLAMA_MODEL", "gemma3:1b")
+        self.available = False
         self.is_thinking = False
-        self.response_text = ""           # Last LLM response
-        self.last_user_text = ""           # Last user input
-        self.response_time = 0.0           # Timestamp of last response
-        self.response_display_timeout = 8.0  # Seconds to show response on screen
+        self.response_text = ""
+        self.last_user_text = ""
+        self.response_time = 0.0
+        self.response_display_timeout = 8.0
 
-        # Conversation history (limited to last 10 exchanges)
         self.history: List[dict] = []
         self.max_history = 10
 
-        # Background thread for LLM calls
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._request_queue: _queue.Queue = _queue.Queue(maxsize=5)
-        self._response_queue: _queue.Queue = _queue.Queue(maxsize=5)
 
-        # Callback for when response is ready
         self.on_response: Optional[callable] = None
 
-        # Try loading API key from config file if not provided
-        if not self.api_key:
-            self._load_config()
-
-        self._update_availability()
+        self._load_config()
+        self._check_availability()
 
     def _load_config(self):
-        """Load API key from config.json if it exists."""
+        """Load settings from config.json if it exists."""
         if os.path.exists(CONFIG_FILE):
             try:
                 import json as _json_mod
                 with open(CONFIG_FILE, "r") as f:
                     config = _json_mod.load(f)
-                self.api_key = config.get("openrouter_api_key", "")
-                if config.get("model"):
-                    self.model = config["model"]
+                if config.get("ollama_base_url"):
+                    self.base_url = config["ollama_base_url"]
+                if config.get("ollama_model"):
+                    self.model = config["ollama_model"]
             except Exception:
                 pass
 
     def _save_config(self):
-        """Save API key to config.json."""
+        """Save settings to config.json."""
         try:
             import json as _json_mod
             config = {}
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, "r") as f:
                     config = _json_mod.load(f)
-            config["openrouter_api_key"] = self.api_key
-            config["model"] = self.model
+            config["ollama_base_url"] = self.base_url
+            config["ollama_model"] = self.model
             with open(CONFIG_FILE, "w") as f:
                 _json_mod.dump(config, f, indent=2)
         except Exception as e:
             print(f"   ⚠️  Failed to save config: {e}")
 
-    def _update_availability(self):
-        """Check if Brain is ready to use."""
-        self.available = bool(self.api_key)
-        if self.available:
-            print(f"   🧠 AI Brain ready: {self.model}")
-        else:
-            print("   ⚠️  AI Brain disabled (no API key)")
-            print("   Set OPENROUTER_API_KEY env var or create config.json")
-
-    def set_api_key(self, key: str):
-        """Set the API key and save to config."""
-        self.api_key = key.strip()
-        self._update_availability()
-        if self.api_key:
-            self._save_config()
+    def _check_availability(self):
+        """Check if Ollama is reachable and model exists."""
+        try:
+            url = f"{self.base_url}/api/tags"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                models = [m["name"] for m in data.get("models", [])]
+                if any(self.model in m for m in models):
+                    self.available = True
+                    print(f"   🧠 AI Brain ready: {self.model} @ {self.base_url}")
+                else:
+                    print(f"   ⚠️  Model '{self.model}' not found in Ollama")
+                    print(f"   Available: {', '.join(models[:5])}")
+                    print(f"   Run: ollama pull {self.model}")
+        except Exception as e:
+            print(f"   ⚠️  Ollama not reachable at {self.base_url}")
+            print(f"   Start Ollama or set OLLAMA_BASE_URL env var")
 
     def think(self, user_text: str):
         """Send user text to LLM in background thread. Non-blocking."""
@@ -1209,7 +1204,7 @@ class Brain:
                         pass
 
     def _call_api(self, user_text: str) -> str:
-        """Make the actual API call to OpenRouter."""
+        """Make API call to local Ollama."""
         try:
             messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             messages.extend(self.history)
@@ -1218,32 +1213,31 @@ class Brain:
             payload = _json.dumps({
                 "model": self.model,
                 "messages": messages,
-                "max_tokens": 150,
-                "temperature": 0.7,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 150,
+                },
             }).encode("utf-8")
 
+            url = f"{self.base_url}/api/chat"
             req = urllib.request.Request(
-                self.API_URL,
+                url,
                 data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
-                    "HTTP-Referer": "https://github.com/robot-eyes-pi",
-                    "X-OpenRouter-Title": "Robot Eyes AI Assistant",
-                },
+                headers={"Content-Type": "application/json"},
                 method="POST",
             )
 
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
-                return data["choices"][0]["message"]["content"].strip()
+                return data["message"]["content"].strip()
 
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
-            print(f"   ⚠️  API error {e.code}: {body[:200]}")
+            print(f"   ⚠️  Ollama error {e.code}: {body[:200]}")
             return ""
         except urllib.error.URLError as e:
-            print(f"   ⚠️  Network error: {e.reason}")
+            print(f"   ⚠️  Connection error: {e.reason}")
             return ""
         except Exception as e:
             print(f"   ⚠️  LLM error: {e}")
@@ -1489,7 +1483,7 @@ def main():
     print(f"   Mode: {'🎮 Demo (simulated audio)' if audio.demo_mode else '🎤 Live Mic'}")
     print(f"   Vosk STT: {'✅ Ready' if voice.model else '❌ Not available'}")
     print(f"   Piper TTS: {'✅ Ready' if speaker.available else '❌ Not available'}")
-    print(f"   AI Brain: {'✅ Ready' if brain.available else '❌ No API key (set in config.json)'}")
+    print(f"   AI Brain (Ollama): {'✅ Ready' if brain.available else '❌ Not available'}")
     print("   Controls:")
     print("   1-7=expr  V=voice  G=auto  T=speak  L=lang  S=sweat  SPACE=blink  ESC/Q=Quit")
 

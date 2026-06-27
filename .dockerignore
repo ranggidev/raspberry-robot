@@ -1,0 +1,12 @@
+.git
+.mimocode
+__pycache__
+*.pyc
+*.wav
+vosk-model/
+vosk-model-id/
+piper/
+piper-voices/
+config.json
+.DS_Store
+Thumbs.db
