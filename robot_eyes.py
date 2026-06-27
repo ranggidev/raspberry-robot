@@ -1166,11 +1166,6 @@ class Brain:
                 self._request_queue.get_nowait()
             except _queue.Empty:
                 break
-        while not self._response_queue.empty():
-            try:
-                self._response_queue.get_nowait()
-            except _queue.Empty:
-                break
 
     def _think_loop(self):
         """Background thread: process LLM requests."""
