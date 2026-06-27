@@ -1,21 +1,34 @@
-# Large model files (download separately)
+# Large model files (download separately or via Docker build)
 vosk-model/
 vosk-model-id/
 vosk-model.zip
 vosk-model-id.zip
+whisper-model/
 
 # Piper binaries and voice models
 piper/
 piper-voices/
+
+# Runtime config (contains API keys)
+config.json
 
 # Generated files
 *.wav
 *.pyc
 __pycache__/
 
+# Python environment
+venv/
+.venv/
+*.egg-info/
+
 # OS files
 .DS_Store
 Thumbs.db
+
+# IDE
+.vscode/
+.idea/
 
 # Test files
 test_tts*.wav
