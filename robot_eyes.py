@@ -466,64 +466,63 @@ class Eye:
         eye_h = int(open_height)
         corner_r = 12
 
-        # Subtle glow behind the eye
-        glow_rect = pygame.Rect(
-            cx - eye_w // 2 - 10, cy - eye_h // 2 - 10,
-            eye_w + 20, eye_h + 20,
-        )
-        pygame.draw.rect(surface, (40, 200, 255, 15), glow_rect, border_radius=corner_r + 4)
+        # Main eye — solid white filled rounded rectangle (RoboEyes style)
+        left = cx - eye_w // 2
+        top = cy - eye_h // 2
+        right = cx + eye_w // 2
+        bottom = cy + eye_h // 2
 
-        # Main eye — simple white rounded rectangle (robot style!)
-        eye_rect = pygame.Rect(
-            cx - eye_w // 2, cy - eye_h // 2,
-            eye_w, eye_h,
-        )
+        eye_rect = pygame.Rect(left, top, eye_w, eye_h)
         pygame.draw.rect(surface, COLOR_EYE_WHITE, eye_rect, border_radius=corner_r)
 
-        # Thin border for definition
-        pygame.draw.rect(surface, (200, 200, 220), eye_rect, width=2, border_radius=corner_r)
+        # === Eyelid overlays (RoboEyes style — background-colored triangles) ===
 
-        # === Eyelid overlays (RoboEyes style — background-colored cuts) ===
-
-        # Top eyelid (for SLEEPY / blink)
+        # Top eyelid for SLEEPY / blink (diagonal triangle cut)
         if self.current_eyelid > 0.01:
-            lid_height = int(eye_h * self.current_eyelid)
-            if lid_height > 0:
-                lid_rect = pygame.Rect(
-                    cx - eye_w // 2 - 2, cy - eye_h // 2 - 2,
-                    eye_w + 4, lid_height,
-                )
-                pygame.draw.rect(surface, COLOR_BG, lid_rect, border_radius=corner_r)
+            lid_h = int(eye_h * self.current_eyelid)
+            if lid_h > 0:
+                if not self.flipped:
+                    # Left eye: triangle covers left side, slopes down from left
+                    pygame.draw.polygon(surface, COLOR_BG, [
+                        (left - 1, top - 1),
+                        (right + 1, top - 1),
+                        (left - 1, top + lid_h),
+                    ])
+                else:
+                    # Right eye: mirrored — triangle covers right side
+                    pygame.draw.polygon(surface, COLOR_BG, [
+                        (left - 1, top - 1),
+                        (right + 1, top - 1),
+                        (right + 1, top + lid_h),
+                    ])
 
-        # Bottom eyelid (for HAPPY — squint from bottom)
+        # Bottom eyelid for HAPPY (rounded rect rising from bottom)
         if self.current_bottom_lid > 0.01:
-            lid_height = int(eye_h * self.current_bottom_lid)
-            if lid_height > 0:
+            lid_h = int(eye_h * self.current_bottom_lid)
+            if lid_h > 0:
                 lid_rect = pygame.Rect(
-                    cx - eye_w // 2 - 2, cy + eye_h // 2 - lid_height + 2,
-                    eye_w + 4, lid_height,
+                    left - 1, bottom - lid_h + 1,
+                    eye_w + 2, eye_h,
                 )
                 pygame.draw.rect(surface, COLOR_BG, lid_rect, border_radius=corner_r)
 
-        # Angled eyelid (for ANGRY — slants from outer top toward center)
+        # Angled eyelid for ANGRY (triangle, opposite direction of tired)
         if self.current_eyelid_angle > 0.01:
-            outer_drop = int(eye_h * self.current_eyelid_angle * 0.6)
-            inner_drop = int(eye_h * self.current_eyelid_angle * 0.1)
-            if not self.flipped:  # Left eye: outer = left side
-                pts = [
-                    (cx - eye_w // 2, cy - eye_h // 2),
-                    (cx + eye_w // 2, cy - eye_h // 2),
-                    (cx + eye_w // 2, cy - eye_h // 2 + inner_drop),
-                    (cx - eye_w // 2, cy - eye_h // 2 + outer_drop),
-                ]
-            else:  # Right eye: outer = right side
-                pts = [
-                    (cx - eye_w // 2, cy - eye_h // 2),
-                    (cx + eye_w // 2, cy - eye_h // 2),
-                    (cx + eye_w // 2, cy - eye_h // 2 + outer_drop),
-                    (cx - eye_w // 2, cy - eye_h // 2 + inner_drop),
-                ]
-            pygame.draw.polygon(surface, COLOR_BG, pts)
+            drop = int(eye_h * self.current_eyelid_angle * 0.5)
+            if not self.flipped:
+                # Left eye: triangle covers right side, slopes down from right
+                pygame.draw.polygon(surface, COLOR_BG, [
+                    (left - 1, top - 1),
+                    (right + 1, top - 1),
+                    (right + 1, top + drop),
+                ])
+            else:
+                # Right eye: mirrored — triangle covers left side
+                pygame.draw.polygon(surface, COLOR_BG, [
+                    (left - 1, top - 1),
+                    (right + 1, top - 1),
+                    (left - 1, top + drop),
+                ])
 
         # Eyebrow
         if style.eyebrow_visible:
