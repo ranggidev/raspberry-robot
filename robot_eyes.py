@@ -1386,12 +1386,20 @@ class VoiceRecognizer:
         if len(samples) < 1600:  # Too short
             return
 
+        # Skip silent audio — Whisper hallucinates text from noise
+        rms = np.sqrt(np.mean(samples ** 2))
+        if rms < 0.01:
+            return
+
         try:
             segments, info = self.model.transcribe(
                 samples,
                 language="id",
                 beam_size=5,
                 vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500),
+                no_speech_threshold=0.6,
+                sample_rate=self.sample_rate,
             )
 
             text_parts = []
