@@ -1,12 +1,15 @@
 FROM python:3.11-slim
 
-# System dependencies: SDL2 (pygame), PortAudio (pyaudio), ALSA (aplay for TTS)
+# System dependencies: SDL2 (pygame), PortAudio (pyaudio), ALSA (aplay), ffmpeg (whisper), Mesa (display)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsdl2-2.0-0 \
     portaudio19-dev \
     alsa-utils \
     libasound2 \
     libasound2-plugins \
+    ffmpeg \
+    mesa-utils \
+    libgl1-mesa-dri \
     wget \
     unzip \
     gcc \
@@ -18,19 +21,15 @@ RUN printf 'pcm.!default {\n    type plug\n    slave { pcm "plughw:0,0" }\n}\nct
 
 WORKDIR /app
 
-# Python dependencies
+# Python dependencies (PyTorch CPU-only for Whisper)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Convert Whisper model to CTranslate2 format (small = fast on CPU)
-RUN pip install --no-cache-dir transformers torch --extra-index-url https://download.pytorch.org/whl/cpu \
-    && python3 -c "from ctranslate2.converters import TransformersConverter; \
-       converter = TransformersConverter('openai/whisper-small'); \
-       converter.convert('/app/whisper-model', quantization='int8', force=True)" \
-    && pip uninstall -y torch transformers safetensors accelerate -q \
-    && rm -rf /root/.cache/huggingface /root/.cache/torch
+# Pre-download Whisper small model (~460MB)
+RUN python3 -c "import whisper; whisper.load_model('small')"
 
-# Piper TTS binary (x86_64)
+# Download Piper TTS binary (x86_64)
 RUN mkdir -p /app/piper/piper \
     && wget -q https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz -O /tmp/piper.tar.gz \
     && tar -xzf /tmp/piper.tar.gz -C /app/piper/piper/ --strip-components=1 \

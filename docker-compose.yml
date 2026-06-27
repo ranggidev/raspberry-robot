@@ -6,6 +6,9 @@ services:
       - "29"
     environment:
       - DISPLAY=${DISPLAY}
+      - SDL_VIDEODRIVER=x11
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - GALLIUM_DRIVER=llvmpipe
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - OLLAMA_BASE_URL=http://localhost:11434
       - OLLAMA_MODEL=gemma3:1b

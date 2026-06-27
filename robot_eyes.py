@@ -57,9 +57,9 @@ except ImportError:
 import queue as _queue
 import json as _json
 
-# Optional: faster-whisper for speech-to-text
+# Optional: whisper for speech-to-text
 try:
-    from faster_whisper import WhisperModel
+    import whisper
     WHISPER_AVAILABLE = True
 except ImportError:
     WHISPER_AVAILABLE = False
@@ -1262,23 +1262,20 @@ class Brain:
 
 
 # =============================================================================
-# Voice Recognizer (Whisper STT - threaded, non-blocking)
+# Voice Recognizer (OpenAI Whisper STT - threaded, non-blocking)
 # =============================================================================
 class VoiceRecognizer:
     """
-    Runs Whisper speech-to-text in a background thread.
-    Receives audio data from AudioLevelDetector via a shared queue
-    (no separate mic stream — avoids device contention).
-    Uses faster-whisper (CTranslate2) for efficient inference.
+    Runs OpenAI Whisper speech-to-text in a background thread.
+    Receives audio data from AudioLevelDetector via a shared queue.
     """
 
-    def __init__(self, model_path: str = "/app/whisper-model", sample_rate: int = 48000):
-        self.model_path = model_path
+    def __init__(self, model_name: str = "small", sample_rate: int = 48000):
+        self.model_name = model_name
         self.sample_rate = sample_rate
         self.running = False
         self.thread: Optional[threading.Thread] = None
 
-        # Recognition state
         self.is_listening = False
         self.partial_text = ""
         self.final_text = ""
@@ -1287,24 +1284,23 @@ class VoiceRecognizer:
         self.all_results: List[str] = []
         self.model = None
 
-        # Audio buffer — accumulate audio for batch processing
         self._audio_queue: _queue.Queue = _queue.Queue(maxsize=100)
         self._audio_buffer = bytearray()
-        self._buffer_duration = 1.5  # Process every 1.5 seconds of audio
-        self._bytes_per_second = sample_rate * 2  # 16-bit mono = 2 bytes/sample
+        self._buffer_duration = 1.5
+        self._bytes_per_second = sample_rate * 2
 
         self._init_whisper()
 
     def _init_whisper(self):
         """Initialize Whisper model."""
         if not WHISPER_AVAILABLE:
-            print("   ⚠️  faster-whisper not installed — STT disabled")
-            print("   Install with: pip3 install faster-whisper")
+            print("   ⚠️  whisper not installed — STT disabled")
+            print("   Install with: pip install openai-whisper")
             return
 
         try:
-            print(f"   🧠 Loading Whisper model: {self.model_path}...")
-            self.model = WhisperModel(self.model_path, device="cpu", compute_type="int8")
+            print(f"   🧠 Loading Whisper model: {self.model_name}...")
+            self.model = whisper.load_model(self.model_name)
             print("   ✅ Whisper model loaded!")
         except Exception as e:
             print(f"   ⚠️  Failed to load Whisper model: {e}")
@@ -1342,7 +1338,7 @@ class VoiceRecognizer:
         print("   🎙️  Voice recognition (Whisper) started!")
 
     def stop(self):
-        """Stop the recognition thread and unsubscribe from audio."""
+        """Stop the recognition thread."""
         self.running = False
         self.is_listening = False
         if self.thread:
@@ -1367,7 +1363,6 @@ class VoiceRecognizer:
 
             self._audio_buffer.extend(data)
 
-            # Process when we have enough audio (2 seconds)
             if len(self._audio_buffer) >= self._bytes_per_second * self._buffer_duration:
                 self._process_buffer()
 
@@ -1376,51 +1371,44 @@ class VoiceRecognizer:
         if not self._audio_buffer:
             return
 
-        # Convert 16-bit PCM to float32
         audio_data = bytes(self._audio_buffer)
         self._audio_buffer = bytearray()
 
         import numpy as np
         samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
 
-        if len(samples) < 1600:  # Too short
+        if len(samples) < 1600:
             return
 
-        # Skip silent audio — Whisper hallucinates text from noise
+        # Skip silent audio
         rms = np.sqrt(np.mean(samples ** 2))
         if rms < 0.01:
             return
 
         try:
-            segments, info = self.model.transcribe(
+            # Whisper expects float32 numpy array, handles resampling internally
+            result = self.model.transcribe(
                 samples,
                 language="id",
-                beam_size=5,
                 temperature=0,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500),
                 no_speech_threshold=0.6,
-                compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.0,
                 condition_on_previous_text=False,
                 initial_prompt="Transkripsi bahasa Indonesia:",
             )
 
-            text_parts = []
-            for segment in segments:
+            text = result.get("text", "").strip()
+            if text:
                 # Filter low-confidence segments
-                if segment.no_speech_prob > 0.5:
-                    continue
-                text = segment.text.strip()
-                if text:
-                    text_parts.append(text)
+                segments = result.get("segments", [])
+                if segments:
+                    avg_no_speech = np.mean([s.get("no_speech_prob", 0) for s in segments])
+                    if avg_no_speech > 0.5:
+                        return
 
-            if text_parts:
-                full_text = " ".join(text_parts)
-                self.final_text = full_text
+                self.final_text = text
                 self.final_text_time = time.time()
-                self.all_results.append(full_text)
-                print(f"   🗣️  [{full_text}]")
+                self.all_results.append(text)
+                print(f"   🗣️  [{text}]")
                 self.partial_text = ""
 
         except Exception as e:

@@ -1,4 +1,4 @@
 pygame
 pyaudio
-faster-whisper
+openai-whisper
 numpy
