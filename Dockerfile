@@ -22,10 +22,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Convert Whisper model to CTranslate2 format
+# Convert Whisper model to CTranslate2 format (small = fast on CPU)
 RUN pip install --no-cache-dir transformers torch --extra-index-url https://download.pytorch.org/whl/cpu \
     && python3 -c "from ctranslate2.converters import TransformersConverter; \
-       converter = TransformersConverter('openai/whisper-medium'); \
+       converter = TransformersConverter('openai/whisper-small'); \
        converter.convert('/app/whisper-model', quantization='int8', force=True)" \
     && pip uninstall -y torch transformers safetensors accelerate -q \
     && rm -rf /root/.cache/huggingface /root/.cache/torch

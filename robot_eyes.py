@@ -1290,7 +1290,7 @@ class VoiceRecognizer:
         # Audio buffer — accumulate audio for batch processing
         self._audio_queue: _queue.Queue = _queue.Queue(maxsize=100)
         self._audio_buffer = bytearray()
-        self._buffer_duration = 2.0  # Process every 2 seconds of audio
+        self._buffer_duration = 1.5  # Process every 1.5 seconds of audio
         self._bytes_per_second = sample_rate * 2  # 16-bit mono = 2 bytes/sample
 
         self._init_whisper()
