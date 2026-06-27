@@ -1399,7 +1399,6 @@ class VoiceRecognizer:
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
                 no_speech_threshold=0.6,
-                sample_rate=self.sample_rate,
             )
 
             text_parts = []
