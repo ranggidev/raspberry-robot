@@ -1,9 +1,10 @@
-# 🤖 AI Robot Eyes — Voice Assistant for Raspberry Pi
+# 🤖 AI Robot Eyes — Voice Assistant
 
-Robot AI dengan mata lucu animasi yang bisa mendengar (STT), berbicara (TTS), dan merespons suara user. Dibuat untuk **Raspberry Pi 4** dengan tampilan di monitor HDMI.
+Robot AI dengan mata lucu animasi yang bisa mendengar (STT), berbicara (TTS), dan merespons suara user via LLM (Ollama). Berjalan di **Raspberry Pi 4** dan **Ubuntu/Linux** via Docker.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
-![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%204-red)
+![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%204%20%7C%20Ubuntu-red)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
@@ -34,6 +35,12 @@ Robot AI dengan mata lucu animasi yang bisa mendengar (STT), berbicara (TTS), da
 - Variasi bentuk elliptical
 - Tongue hint saat mulut terbuka lebar
 - Berfungsi untuk mic input dan TTS output
+
+### 🧠 AI Brain (Ollama)
+- Local LLM via Ollama — tidak perlu API key
+- Default model: `gemma3:1b` (configurable)
+- Background thread — tidak blocking animasi
+- Auto-respond pipeline: STT → LLM → TTS
 
 ---
 
@@ -114,6 +121,62 @@ python3 robot_eyes.py
 
 ---
 
+## 🐳 Setup Docker (Ubuntu / Linux)
+
+### Prerequisites
+- Docker & Docker Compose
+- Ollama (install dari [ollama.ai](https://ollama.ai))
+
+### 1. Clone & Pull Model
+
+```bash
+git clone <your-repo-url> raspberry-robot
+cd raspberry-robot
+ollama pull gemma3:1b
+```
+
+### 2. Jalankan!
+
+```bash
+./start.sh
+```
+
+Atau manual:
+```bash
+xhost +local:docker
+docker compose up
+```
+
+### Docker Commands
+
+```bash
+docker compose up          # Jalankan (foreground)
+docker compose up -d       # Jalankan (background)
+docker compose down        # Stop container
+docker compose build       # Rebuild image
+docker compose logs -f     # Lihat logs
+```
+
+### Environment Variables
+
+| Variable | Default | Keterangan |
+|----------|---------|------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | URL Ollama server |
+| `OLLAMA_MODEL` | `gemma3:1b` | Model LLM yang digunakan |
+
+### Ganti Model LLM
+
+```bash
+# Pull model lain
+ollama pull llama3.2
+
+# Edit docker-compose.yml
+environment:
+  - OLLAMA_MODEL=llama3.2
+```
+
+---
+
 ## 🎮 Kontrol
 
 | Tombol | Fungsi |
@@ -125,6 +188,7 @@ python3 robot_eyes.py
 | `5` | Sleepy expression |
 | `6` | Listening expression |
 | `V` | Toggle voice recognition (STT) |
+| `G` | Toggle auto-respond (STT → LLM → TTS) |
 | `T` | Test TTS — speak demo phrase |
 | `L` | Toggle bahasa TTS (EN ↔ ID) |
 | `D` | Toggle demo talking animation |
@@ -147,26 +211,21 @@ python3 robot_eyes.py --window 320x240     # Window mode custom size
 ## 📁 Struktur Project
 
 ```
-/home/pi/Ai/
+raspberry-robot/
 ├── robot_eyes.py           # Main script (semua fitur)
+├── Dockerfile              # Docker image definition
+├── docker-compose.yml      # Docker compose config
+├── requirements.txt        # Python dependencies
+├── start.sh                # Quick start script
+├── .dockerignore           # Docker ignore rules
 ├── .gitignore              # Git ignore rules
 ├── README.md               # Dokumentasi ini
-├── vosk-model/             # Vosk STT model (download manually)
-│   ├── am/
-│   ├── conf/
-│   ├── graph/
-│   └── ivector/
-├── piper/                  # Piper TTS binary (download manually)
-│   └── piper/
-│       └── piper           # Executable
-└── piper-voices/           # TTS voice models (download manually)
-    ├── en_US-lessac-medium.onnx
-    ├── en_US-lessac-medium.onnx.json
-    ├── id_ID-news_tts-medium.onnx
-    └── id_ID-news_tts-medium.onnx.json
+├── vosk-model/             # Vosk STT model (download/Docker)
+├── piper/                  # Piper TTS binary (download/Docker)
+└── piper-voices/           # TTS voice models (download/Docker)
 ```
 
-> **Note**: Folder `vosk-model/`, `piper/`, dan `piper-voices/` di-exclude dari git karena ukurannya besar. Download manual sesuai instruktur di atas.
+> **Note**: Folder `vosk-model/`, `piper/`, dan `piper-voices/` di-exclude dari git. Di Docker, semua didownload otomatis saat build. Untuk Raspberry Pi, download manual sesuai instruktur di atas.
 
 ---
 
@@ -195,11 +254,11 @@ python3 robot_eyes.py --window 320x240     # Window mode custom size
 │  │  │  (PyAudio)  │  │  TTS → aplay│  │        │
 │  │  └──────┬──────┘  └─────────────┘  │        │
 │  │         │                           │        │
-│  │  ┌──────┴──────┐                   │        │
-│  │  │VoiceRecog.  │                   │        │
-│  │  │  (Vosk)     │                   │        │
-│  │  │ STT thread  │                   │        │
-│  │  └─────────────┘                   │        │
+│  │  ┌──────┴──────┐  ┌─────────────┐  │        │
+│  │  │VoiceRecog.  │  │  Brain      │  │        │
+│  │  │  (Vosk)     │  │ (Ollama)    │  │        │
+│  │  │ STT thread  │  │ LLM thread  │  │        │
+│  │  └─────────────┘  └─────────────┘  │        │
 │  └─────────────────────────────────────┘        │
 └─────────────────────────────────────────────────┘
 ```
@@ -207,7 +266,7 @@ python3 robot_eyes.py --window 320x240     # Window mode custom size
 ### Key Design Decisions
 
 - **Single mic stream**: `AudioLevelDetector` membaca mic, lalu feed raw audio ke `VoiceRecognizer` via subscriber callback. Tidak ada dual mic stream yang bisa konflik.
-- **Threaded STT & TTS**: Vosk dan Piper berjalan di background thread, tidak blocking animasi.
+- **Threaded STT, TTS, & LLM**: Vosk, Piper, dan Ollama berjalan di background thread, tidak blocking animasi.
 - **Simulated TTS mouth**: Karena Piper output langsung ke `aplay`, level audio di-simulasi untuk drive mulut animation.
 - **Delta-time animation**: Semua animasi pakai `dt` (delta time), jadi konsisten di framerate apapun.
 
@@ -239,6 +298,24 @@ Download Piper binary sesuai instruktur di bagian Setup.
 - Pastikan power supply 5V 3A
 - Gunakan active cooler/fan untuk Pi 4
 - Kurangi jumlah sparkle particles
+
+### Docker: "Cannot open display"
+```bash
+xhost +local:docker
+```
+
+### Docker: "Ollama not reachable"
+Pastikan Ollama berjalan di host:
+```bash
+ollama serve
+ollama pull gemma3:1b
+```
+
+### Docker: mic tidak terdeteksi
+Cek ALSA device di container:
+```bash
+docker exec robot-eyes arecord -l
+```
 
 ---
 
