@@ -878,7 +878,7 @@ class Speaker:
     Drives mouth talking animation via a simulated audio level.
     """
 
-    def __init__(self, language: str = "en"):
+    def __init__(self, language: str = "id"):
         self.piper_bin = PIPER_BIN
         self.language = language
         self.available = False
@@ -1066,7 +1066,7 @@ class Brain:
         "You are a cute robot assistant with big animated eyes. "
         "You are friendly, helpful, and speak in short sentences (1-2 sentences max). "
         "Keep responses brief since they will be spoken aloud via TTS. "
-        "If asked in Indonesian, reply in Indonesian. If asked in English, reply in English. "
+        "Always reply in Indonesian (Bahasa Indonesia) unless explicitly asked in English. "
         "You live on a Raspberry Pi and love chatting with your owner."
     )
 

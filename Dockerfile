@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ALSA config: route default device to real hardware mic (card 0, device 0, native rate 48kHz)
-RUN printf 'pcm.!default {\n    type plug\n    slave { pcm "hw:0,0" rate 48000 channels 1 }\n}\nctl.!default {\n    type hw\n    card 0\n}\n' > /etc/asound.conf
+# ALSA config: route default device to real hardware with auto format conversion
+RUN printf 'pcm.!default {\n    type plug\n    slave { pcm "plughw:0,0" }\n}\nctl.!default {\n    type hw\n    card 0\n}\n' > /etc/asound.conf
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Vosk model (small en-us, ~40MB)
+# Download Vosk model (English - no Indonesian model available)
 RUN wget -q https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -O /tmp/vosk-model.zip \
     && unzip -q /tmp/vosk-model.zip -d /tmp \
     && mv /tmp/vosk-model-small-en-us-0.15 /app/vosk-model \

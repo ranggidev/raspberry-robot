@@ -2,6 +2,8 @@ services:
   robot-eyes:
     build: .
     container_name: robot-eyes
+    group_add:
+      - "29"
     environment:
       - DISPLAY=${DISPLAY}
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
